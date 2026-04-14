@@ -1,0 +1,1308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AeroTouch Interface</title>
+    <link rel="icon" type="image/png" href="logo3.png   ">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+
+    <!-- MediaPipe Hands CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --bg: #010408;
+            --cyan: #00f5ff;
+            --purple: #bf00ff;
+            --blue: #0055ff;
+            --green: #00ff88;
+            --red: #ff2244;
+            --white: #e8f4ff;
+            --dim: rgba(0, 245, 255, 0.08);
+            --border: rgba(0, 245, 255, 0.25);
+            --glow: 0 0 12px rgba(0, 245, 255, 0.6), 0 0 40px rgba(0, 245, 255, 0.2);
+
+            /* Active mode colors — COMBAT by default */
+            --mode-primary: var(--cyan);
+            --mode-secondary: var(--blue);
+            --mode-accent: var(--purple);
+            --mode-glow: var(--glow);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Share Tech Mono', monospace;
+            background: var(--bg);
+            color: var(--white);
+            overflow: hidden;
+            user-select: none;
+        }
+
+        /* ─── VIDEO / CANVAS STACK ─────────────────── */
+        .video-container {
+            position: absolute;
+            inset: 0;
+        }
+
+        .input_video {
+            position: absolute;
+            inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            filter: brightness(0.45) contrast(1.15) saturate(0.8);
+            z-index: 0;
+        }
+
+        #bgCanvas, #mainCanvas {
+            position: absolute;
+            inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        #bgCanvas  { z-index: 1; pointer-events: none; }
+        #mainCanvas{ z-index: 5; pointer-events: none; }
+
+        /* ─── SCANLINE OVERLAY ─────────────────────── */
+        .scanlines {
+            position: absolute;
+            inset: 0;
+            z-index: 6;
+            pointer-events: none;
+            background: repeating-linear-gradient(
+                to bottom,
+                transparent 0px,
+                transparent 3px,
+                rgba(0,0,0,0.08) 3px,
+                rgba(0,0,0,0.08) 4px
+            );
+            animation: scanmove 8s linear infinite;
+        }
+        @keyframes scanmove {
+            0%   { background-position: 0 0; }
+            100% { background-position: 0 200px; }
+        }
+
+        /* Moving scan beam */
+        .scan-beam {
+            position: absolute;
+            left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(to right, transparent, rgba(0,245,255,0.4), transparent);
+            z-index: 7;
+            pointer-events: none;
+            animation: beam 5s linear infinite;
+        }
+        @keyframes beam {
+            0%   { top: -2px; opacity: 0; }
+            5%   { opacity: 1; }
+            95%  { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+
+        /* ─── CORNER DECORATIONS ───────────────────── */
+        .corner {
+            position: absolute;
+            width: 32px; height: 32px;
+            z-index: 9;
+            pointer-events: none;
+        }
+        .corner::before, .corner::after {
+            content: '';
+            position: absolute;
+            background: var(--mode-primary);
+            box-shadow: 0 0 8px var(--mode-primary);
+        }
+        .corner::before { width: 100%; height: 2px; }
+        .corner::after  { width: 2px; height: 100%; }
+        .corner.tl { top: 16px; left: 16px; }
+        .corner.tr { top: 16px; right: 16px; transform: scaleX(-1); }
+        .corner.bl { bottom: 16px; left: 16px; transform: scaleY(-1); }
+        .corner.br { bottom: 16px; right: 16px; transform: scale(-1); }
+
+        /* ─── GLASS PANEL ──────────────────────────── */
+        .panel {
+            background: rgba(0, 15, 30, 0.65);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            backdrop-filter: blur(18px) saturate(1.4);
+            -webkit-backdrop-filter: blur(18px) saturate(1.4);
+            position: relative;
+            overflow: hidden;
+        }
+        .panel::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(to right, transparent, var(--mode-primary), transparent);
+            opacity: 0.7;
+        }
+        .panel-label {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.6rem;
+            font-weight: 700;
+            letter-spacing: 3px;
+            color: var(--mode-primary);
+            text-transform: uppercase;
+            padding: 10px 14px 6px;
+            border-bottom: 1px solid rgba(0,245,255,0.1);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .panel-label .dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--mode-primary);
+            box-shadow: 0 0 6px var(--mode-primary);
+            animation: pulse-dot 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.7); }
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 7px 14px;
+            font-size: 0.75rem;
+            color: rgba(200,230,255,0.7);
+            border-bottom: 1px solid rgba(0,245,255,0.05);
+        }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-row .key { letter-spacing: 1.5px; font-size: 0.68rem; }
+        .stat-row .val {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--mode-primary);
+            text-shadow: 0 0 8px var(--mode-primary);
+        }
+        .stat-row .val.online { color: var(--green); text-shadow: 0 0 8px var(--green); }
+        .stat-row .val.warn   { color: #ffaa00; text-shadow: 0 0 8px #ffaa00; }
+
+        /* Progress bar */
+        .mini-bar {
+            height: 3px;
+            background: rgba(0,245,255,0.1);
+            border-radius: 2px;
+            margin: 0 14px 10px;
+            overflow: hidden;
+        }
+        .mini-bar-fill {
+            height: 100%;
+            background: linear-gradient(to right, var(--mode-secondary), var(--mode-primary));
+            border-radius: 2px;
+            transition: width 0.5s ease;
+            box-shadow: 0 0 6px var(--mode-primary);
+        }
+
+        /* ─── HUD LAYOUT ───────────────────────────── */
+        #hud {
+            position: absolute;
+            inset: 0;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        /* Left panel */
+        #panel-left {
+            position: absolute;
+            top: 60px;
+            left: 20px;
+            width: 210px;
+            pointer-events: all;
+        }
+
+        /* Right panel */
+        #panel-right {
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            width: 210px;
+            pointer-events: all;
+        }
+
+        /* Top center */
+        #top-center {
+            position: absolute;
+            top: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            pointer-events: none;
+        }
+        .system-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 900;
+            letter-spacing: 6px;
+            color: var(--mode-primary);
+            text-shadow: var(--glow);
+            text-transform: uppercase;
+            animation: title-flicker 6s ease-in-out infinite;
+        }
+        @keyframes title-flicker {
+            0%, 94%, 96%, 100% { opacity: 1; }
+            95% { opacity: 0.5; }
+        }
+        .neural-link-badge {
+            font-size: 0.6rem;
+            letter-spacing: 4px;
+            color: var(--green);
+            text-shadow: 0 0 8px var(--green);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .neural-link-badge::before, .neural-link-badge::after {
+            content: '';
+            width: 28px; height: 1px;
+            background: linear-gradient(to right, transparent, var(--green));
+        }
+        .neural-link-badge::after {
+            background: linear-gradient(to left, transparent, var(--green));
+        }
+
+        /* Radar widget */
+        #radar-widget {
+            position: absolute;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 120px;
+            pointer-events: none;
+            opacity: 0.55;
+        }
+        #radar-widget canvas {
+            width: 100%; height: 100%;
+        }
+
+        /* FPS + version strip */
+        #stats-strip {
+            position: absolute;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 24px;
+            font-size: 0.6rem;
+            letter-spacing: 2px;
+            color: rgba(0,245,255,0.4);
+            pointer-events: none;
+        }
+
+        /* ─── FLOATING DATA TEXT ───────────────────── */
+        .float-data {
+            position: absolute;
+            font-size: 0.58rem;
+            letter-spacing: 1px;
+            color: rgba(0,245,255,0.22);
+            pointer-events: none;
+            z-index: 8;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        /* ─── MODE SELECTOR ────────────────────────── */
+        #modes {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            display: flex;
+            gap: 8px;
+            background: rgba(0,10,20,0.7);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(0,245,255,0.15);
+            border-radius: 6px;
+            padding: 8px;
+            pointer-events: all;
+        }
+
+        .mode-btn {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.62rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            background: transparent;
+            border: 1px solid transparent;
+            color: rgba(255,255,255,0.4);
+            padding: 8px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            position: relative;
+            overflow: hidden;
+        }
+        .mode-btn .mode-icon {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .mode-btn:hover {
+            color: white;
+            border-color: rgba(255,255,255,0.2);
+        }
+        .mode-btn.active {
+            color: white;
+            border-color: var(--mode-active-color);
+            background: rgba(255,255,255,0.06);
+            text-shadow: 0 0 10px var(--mode-active-color);
+            box-shadow: 0 0 16px rgba(0,0,0,0.4), inset 0 0 12px rgba(255,255,255,0.02);
+        }
+        .mode-btn.active .mode-icon {
+            box-shadow: 0 0 8px var(--mode-active-color);
+        }
+        .mode-btn::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.04), transparent);
+            pointer-events: none;
+        }
+
+        /* ─── GLITCH OVERLAY ───────────────────────── */
+        #glitch {
+            position: absolute;
+            inset: 0;
+            z-index: 50;
+            pointer-events: none;
+            opacity: 0;
+        }
+        #glitch.active {
+            animation: glitch-anim 0.5s steps(2) forwards;
+        }
+        @keyframes glitch-anim {
+            0%   { opacity: 1; background: rgba(0,245,255,0.04); clip-path: inset(20% 0 60% 0); }
+            15%  { clip-path: inset(60% 0 10% 0); background: rgba(191,0,255,0.04); }
+            30%  { clip-path: inset(40% 0 30% 0); transform: translate(-4px, 2px); }
+            45%  { clip-path: inset(10% 0 80% 0); transform: translate(4px, -2px); }
+            60%  { clip-path: inset(80% 0 5% 0); transform: translate(-2px, 0); }
+            75%  { clip-path: none; background: rgba(0,245,255,0.02); transform: none; }
+            100% { opacity: 0; }
+        }
+
+        /* ─── BOOT / START OVERLAY ─────────────────── */
+        #bootOverlay {
+            position: absolute;
+            inset: 0;
+            z-index: 200;
+            background: #010408;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 1s ease;
+        }
+        #bootOverlay.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Animated grid bg for boot screen */
+        .boot-grid {
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(0,245,255,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,245,255,0.03) 1px, transparent 1px);
+            background-size: 60px 60px;
+            animation: grid-drift 20s linear infinite;
+        }
+        @keyframes grid-drift {
+            from { transform: translateY(0); }
+            to   { transform: translateY(60px); }
+        }
+
+        /* Boot title */
+        .boot-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: clamp(1.6rem, 4vw, 3rem);
+            font-weight: 900;
+            letter-spacing: 8px;
+            text-align: center;
+            color: var(--cyan);
+            text-shadow: 0 0 20px rgba(0,245,255,0.8), 0 0 60px rgba(0,245,255,0.3);
+            position: relative;
+            z-index: 1;
+            animation: boot-title-in 1s ease forwards;
+        }
+        @keyframes boot-title-in {
+            from { opacity: 0; transform: translateY(-20px) scale(0.95); letter-spacing: 20px; }
+            to   { opacity: 1; transform: translateY(0) scale(1); letter-spacing: 8px; }
+        }
+
+        .boot-sub {
+            font-size: 0.78rem;
+            letter-spacing: 5px;
+            color: rgba(0,245,255,0.55);
+            margin-top: 8px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .boot-separator {
+            width: 300px;
+            height: 1px;
+            background: linear-gradient(to right, transparent, var(--cyan), transparent);
+            margin: 28px auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Boot log */
+        .boot-log {
+            width: 380px;
+            max-width: 90vw;
+            position: relative;
+            z-index: 1;
+        }
+
+        .boot-log-line {
+            font-size: 0.72rem;
+            letter-spacing: 1.5px;
+            padding: 5px 0;
+            color: rgba(0,245,255,0.6);
+            opacity: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .boot-log-line.show {
+            animation: log-appear 0.3s ease forwards;
+        }
+        .boot-log-line .check { color: var(--green); font-size: 0.8rem; }
+        @keyframes log-appear {
+            from { opacity: 0; transform: translateX(-10px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+
+        /* Progress bar */
+        .boot-progress-wrap {
+            width: 380px;
+            max-width: 90vw;
+            position: relative;
+            z-index: 1;
+            margin-top: 22px;
+        }
+        .boot-progress-track {
+            height: 4px;
+            background: rgba(0,245,255,0.1);
+            border-radius: 2px;
+            overflow: hidden;
+            border: 1px solid rgba(0,245,255,0.15);
+        }
+        .boot-progress-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(to right, var(--blue), var(--cyan));
+            border-radius: 2px;
+            box-shadow: 0 0 10px var(--cyan);
+            transition: width 0.4s ease;
+        }
+        .boot-progress-label {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 6px;
+            font-size: 0.6rem;
+            letter-spacing: 2px;
+            color: rgba(0,245,255,0.4);
+        }
+
+        /* Welcome tag */
+        .boot-welcome {
+            margin-top: 30px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.8rem;
+            letter-spacing: 4px;
+            color: rgba(255,255,255,0.7);
+            position: relative;
+            z-index: 1;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+        .boot-welcome.show { opacity: 1; }
+        .boot-welcome span { color: var(--cyan); text-shadow: 0 0 10px var(--cyan); }
+
+        /* Activate button */
+        .activate-btn {
+            margin-top: 28px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 5px;
+            text-transform: uppercase;
+            padding: 14px 40px;
+            background: transparent;
+            border: 2px solid var(--cyan);
+            color: var(--cyan);
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            z-index: 1;
+            opacity: 0;
+            transition: all 0.3s ease, opacity 0.5s ease;
+            overflow: hidden;
+        }
+        .activate-btn::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: var(--cyan);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            z-index: -1;
+        }
+        .activate-btn:hover { color: #000; box-shadow: 0 0 30px rgba(0,245,255,0.5); }
+        .activate-btn:hover::before { transform: translateX(0); }
+        .activate-btn.show { opacity: 1; pointer-events: all; }
+
+        /* ─── ENERGY RING (HAND indicator) ─────────── */
+        #energy-ring {
+            position: absolute;
+            bottom: 80px;
+            right: 20px;
+            width: 80px; height: 80px;
+            pointer-events: none;
+        }
+
+        /* ─── TYPING CURSOR ────────────────────────── */
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        .cursor { animation: blink 1s step-start infinite; }
+
+        /* ─── HIDDEN ───────────────────────────────── */
+        .hidden { display: none !important; }
+        .invisible { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <!-- Glitch overlay -->
+    <div id="glitch"></div>
+
+    <!-- ─── BOOT OVERLAY ──────────────────────── -->
+    <div id="bootOverlay">
+        <div class="boot-grid"></div>
+
+        <div class="boot-title">AERO TOUCH INTERFACE</div>
+        <div class="boot-sub" id="bootSubtitle">INITIALIZING NEURAL INTERFACE<span class="cursor">_</span></div>
+        <div class="boot-separator"></div>
+
+        <div class="boot-log" id="bootLog">
+            <div class="boot-log-line" id="log1"><span class="check">▸</span> Loading AI Modules...</div>
+            <div class="boot-log-line" id="log2"><span class="check">▸</span> Calibrating Vision System...</div>
+            <div class="boot-log-line" id="log3"><span class="check">▸</span> Establishing Neural Link...</div>
+            <div class="boot-log-line" id="log4"><span class="check">▸</span> Mapping Biometric Signature...</div>
+            <div class="boot-log-line" id="log5"><span class="check" style="color:var(--green)">✓</span> System Ready — Identity Confirmed</div>
+        </div>
+
+        <div class="boot-progress-wrap">
+            <div class="boot-progress-track">
+                <div class="boot-progress-fill" id="bootBar"></div>
+            </div>
+            <div class="boot-progress-label">
+                <span>BOOT SEQUENCE</span>
+                <span id="bootPct">0%</span>
+            </div>
+        </div>
+
+        <div class="boot-welcome" id="bootWelcome">WELCOME BACK, <span>COMMANDER</span></div>
+        <button class="activate-btn" id="activateBtn">◈ ACTIVATE SYSTEM</button>
+    </div>
+
+    <!-- ─── CAMERA + CANVAS LAYER ─────────────── -->
+    <div class="video-container">
+        <video class="input_video" autoplay playsinline></video>
+        <canvas id="bgCanvas"></canvas>
+        <canvas id="mainCanvas"></canvas>
+    </div>
+
+    <!-- Scan overlays -->
+    <div class="scanlines"></div>
+    <div class="scan-beam"></div>
+
+    <!-- Corner decorations -->
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+
+    <!-- Floating ambient data -->
+    <div class="float-data" style="top:12%;right:240px;">SYS.MEM: 94.2%</div>
+    <div class="float-data" style="top:18%;right:240px;">NET.LAT: 2ms</div>
+    <div class="float-data" style="bottom:20%;left:240px;">FRAME.SYNC: ON</div>
+    <div class="float-data" style="bottom:26%;left:240px;">PROC.CORE: A9-X</div>
+    <div class="float-data" style="top:38%;left:245px;">RETINA.CAL: 100%</div>
+    <div class="float-data" style="top:44%;right:245px;">DEPTH.MAP: ACTIVE</div>
+
+    <!-- Radar canvas -->
+    <canvas id="radarCanvas" style="position:absolute;top:90px;left:50%;transform:translateX(-50%);width:90px;height:90px;z-index:9;pointer-events:none;opacity:0.5;"></canvas>
+
+    <!-- ─── HUD ────────────────────────────────── -->
+    <div id="hud" class="invisible">
+
+        <!-- Top center -->
+        <div id="top-center">
+            <div class="system-title">OPERATOR NEURAL CORE</div>
+            <div class="neural-link-badge">NEURAL LINK ACTIVE</div>
+        </div>
+
+        <!-- Left panel -->
+        <div id="panel-left" class="panel">
+            <div class="panel-label"><span class="dot"></span>SYSTEM STATUS</div>
+            <div class="stat-row"><span class="key">AI STATUS</span><span class="val online" id="ui-status">ONLINE</span></div>
+            <div class="stat-row"><span class="key">USER</span><span class="val" id="ui-user">OPERATOR</span></div>
+            <div class="stat-row"><span class="key">SYSTEM LOAD</span><span class="val" id="ui-load">--</span></div>
+            <div class="mini-bar"><div class="mini-bar-fill" id="load-bar" style="width:0%"></div></div>
+            <div class="stat-row"><span class="key">UPTIME</span><span class="val" id="ui-uptime">00:00:00</span></div>
+            <div class="stat-row"><span class="key">FPS</span><span class="val" id="ui-fps">--</span></div>
+        </div>
+
+        <!-- Right panel -->
+        <div id="panel-right" class="panel">
+            <div class="panel-label"><span class="dot"></span>NEURAL SENSORS</div>
+            <div class="stat-row"><span class="key">HAND TRACKING</span><span class="val online" id="ui-tracking">ACTIVE</span></div>
+            <div class="stat-row"><span class="key">HANDS DETECTED</span><span class="val" id="ui-hands">0</span></div>
+            <div class="stat-row"><span class="key">GESTURE</span><span class="val" id="ui-gesture">NONE</span></div>
+            <div class="stat-row"><span class="key">ENERGY LEVEL</span><span class="val" id="ui-energy">0%</span></div>
+            <div class="mini-bar"><div class="mini-bar-fill" id="energy-bar" style="width:0%"></div></div>
+            <div class="stat-row"><span class="key">SPREAD</span><span class="val" id="ui-spread">0%</span></div>
+        </div>
+
+        <!-- Stats strip (bottom center) -->
+        <div id="stats-strip">
+            <span>VER 4.7.1</span>
+            <span>|</span>
+            <span id="mode-strip">ANALYSIS MODE</span>
+            <span>|</span>
+            <span>BISWA</span>
+        </div>
+
+    </div>
+
+    <!-- ─── MODE SELECTOR ─────────────────────── -->
+    <div id="modes" class="invisible">
+        <button class="mode-btn" data-mode="ANALYSIS" style="--mode-active-color:#00f5ff;">
+            <span class="mode-icon" style="background:#00f5ff;box-shadow:0 0 6px #00f5ff;"></span>ANALYSIS
+        </button>
+        <button class="mode-btn active" data-mode="COMBAT" style="--mode-active-color:#ff2244;">
+            <span class="mode-icon" style="background:#ff2244;box-shadow:0 0 6px #ff2244;"></span>COMBAT
+        </button>
+        <button class="mode-btn" data-mode="CREATIVE" style="--mode-active-color:#00ff88;">
+            <span class="mode-icon" style="background:#00ff88;box-shadow:0 0 6px #00ff88;"></span>CREATIVE
+        </button>
+        <button class="mode-btn" data-mode="STEALTH" style="--mode-active-color:#bf00ff;">
+            <span class="mode-icon" style="background:#bf00ff;box-shadow:0 0 6px #bf00ff;"></span>STEALTH
+        </button>
+    </div>
+
+<script>
+// ─── GLOBALS ──────────────────────────────────────────────────────────────
+const videoEl   = document.querySelector('.input_video');
+const bgCanvas  = document.getElementById('bgCanvas');
+const mainCanvas= document.getElementById('mainCanvas');
+const bgCtx     = bgCanvas.getContext('2d');
+const ctx       = mainCanvas.getContext('2d');
+const radarCvs  = document.getElementById('radarCanvas');
+const radarCtx  = radarCvs.getContext('2d');
+
+let W = window.innerWidth, H = window.innerHeight;
+let time = 0, lastTime = performance.now();
+let framesThisSecond = 0, lastFpsTime = performance.now();
+let startTime = 0;
+
+let currentHands = [];
+let handVelocities = 0;
+
+// ─── MODES CONFIG ─────────────────────────────────────────────────────────
+let currentMode = 'COMBAT';
+
+const modeConfig = {
+    ANALYSIS: {
+        primary: '#00f5ff', secondary: '#0055ff', accent: '#00aaff',
+        colorFn: (t, i, n) => `hsl(${190 + i * 20}, 100%, 62%)`,
+        particleCount: 2, matrixSpeed: 1
+    },
+    COMBAT: {
+        primary: '#ff2244', secondary: '#ff6600', accent: '#ffaa00',
+        colorFn: (t, i, n) => `hsl(${(0 + i * 15) % 45}, 100%, 58%)`,
+        particleCount: 5, matrixSpeed: 2.5
+    },
+    CREATIVE: {
+        primary: '#00ff88', secondary: '#00ffcc', accent: '#88ff00',
+        colorFn: (t, i, n) => `hsl(${(t * 60 + i * 72) % 360}, 100%, 60%)`,
+        particleCount: 4, matrixSpeed: 1.5
+    },
+    STEALTH: {
+        primary: '#bf00ff', secondary: '#5500aa', accent: '#8800cc',
+        colorFn: (t, i, n) => `hsl(${270 + Math.sin(t + i) * 30}, 100%, 55%)`,
+        particleCount: 1, matrixSpeed: 0.5
+    }
+};
+
+function getMode() { return modeConfig[currentMode]; }
+
+// ─── RESIZE ───────────────────────────────────────────────────────────────
+function resize() {
+    W = window.innerWidth; H = window.innerHeight;
+    bgCanvas.width  = W; bgCanvas.height  = H;
+    mainCanvas.width= W; mainCanvas.height = H;
+    radarCvs.width  = 90; radarCvs.height = 90;
+    maxColumns = Math.floor(W / fontSize);
+    matrixColumns = new Array(maxColumns).fill(0).map(() => Math.random() * H / fontSize);
+}
+window.addEventListener('resize', resize);
+
+// ─── MATRIX BG ────────────────────────────────────────────────────────────
+const fontSize = 14;
+let maxColumns = 0, matrixColumns = [];
+resize();
+
+// ─── PARTICLES / RIPPLES ──────────────────────────────────────────────────
+let particles = [], ripples = [];
+const FINGER_TIPS = [4, 8, 12, 16, 20];
+const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
+
+// ─── AUDIO ────────────────────────────────────────────────────────────────
+let audioCtx = null, humOsc = null, humGain = null;
+
+function initAudio() {
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        humOsc  = audioCtx.createOscillator();
+        humGain = audioCtx.createGain();
+        humOsc.type = 'sine';
+        humOsc.frequency.value = 80;
+        humGain.gain.value = 0;
+        humOsc.connect(humGain);
+        humGain.connect(audioCtx.destination);
+        humOsc.start();
+    } catch(e) { console.warn("Audio unavailable", e); }
+}
+
+function playClick() {
+    if (!audioCtx) return;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'square'; o.frequency.value = 600;
+    g.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.06);
+}
+
+function playModeSwitch() {
+    if (!audioCtx) return;
+    [300, 500, 700].forEach((f, i) => {
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = 'sawtooth'; o.frequency.value = f;
+        const t = audioCtx.currentTime + i * 0.06;
+        g.gain.setValueAtTime(0.06, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(t); o.stop(t + 0.1);
+    });
+}
+
+function triggerZap() {
+    if (!audioCtx) return;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(900, audioCtx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.12);
+    g.gain.setValueAtTime(0.4, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.14);
+}
+
+function updateHum(hands) {
+    if (!audioCtx || !humGain) return;
+    if (hands.length < 2) { humGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1); return; }
+    const p1 = hands[0][8], p2 = hands[1][8];
+    const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    const freq = 80 + (1 - Math.min(dist, 1)) * 250;
+    const vol  = 0.04 + (1 - Math.min(dist, 1)) * 0.12;
+    humOsc.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.1);
+    humGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.1);
+}
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────
+function mapToCanvas(p) { return { x: p.x * W, y: p.y * H }; }
+function dist2D(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+// ─── EFFECTS ──────────────────────────────────────────────────────────────
+function spawnParticles(pos, color, count) {
+    for (let i = 0; i < count; i++) {
+        particles.push({
+            x: pos.x, y: pos.y,
+            vx: (Math.random() - 0.5) * 7,
+            vy: (Math.random() - 0.5) * 7,
+            life: 1, color, size: Math.random() * 3 + 1
+        });
+    }
+}
+
+function spawnRipple(pos, color) {
+    ripples.push({
+        x: pos.x, y: pos.y, radius: 0,
+        maxRadius: 140 + Math.random() * 80,
+        life: 1, color
+    });
+}
+
+// ─── GESTURE DETECTION ────────────────────────────────────────────────────
+let lastPinch = [false, false];
+const uiGesture = document.getElementById('ui-gesture');
+const uiSpread  = document.getElementById('ui-spread');
+const uiHands   = document.getElementById('ui-hands');
+const uiEnergy  = document.getElementById('ui-energy');
+const uiFps     = document.getElementById('ui-fps');
+const uiLoad    = document.getElementById('ui-load');
+const uiUptime  = document.getElementById('ui-uptime');
+const loadBar   = document.getElementById('load-bar');
+const energyBar = document.getElementById('energy-bar');
+
+function detectGestures() {
+    if (!currentHands.length) return;
+    currentHands.forEach((hand, idx) => {
+        const th = hand[4], ix = hand[8];
+        const d = dist2D(th, ix);
+        const pinching = d < 0.05;
+        if (pinching && !lastPinch[idx]) {
+            const mid = { x: (th.x + ix.x)/2, y: (th.y + ix.y)/2 };
+            spawnRipple(mapToCanvas(mid), getMode().primary);
+            triggerZap();
+            typeText(uiGesture, 'PINCH DETECTED');
+        }
+        lastPinch[idx] = pinching;
+    });
+    if (currentHands[0]) {
+        const sp = dist2D(currentHands[0][8], currentHands[0][20]);
+        const pct = Math.min(Math.round(sp * 300), 100);
+        uiSpread.innerText = pct + '%';
+        const energy = Math.min(Math.round(pct * 1.2 + handVelocities * 2000), 100);
+        uiEnergy.innerText = energy + '%';
+        energyBar.style.width = energy + '%';
+        if (!lastPinch.includes(true)) {
+            if (!uiGesture.dataset.typing)
+                uiGesture.innerText = pct > 60 ? 'OPEN HAND' : pct > 30 ? 'PARTIAL' : 'FIST';
+        }
+    }
+}
+
+// Typing text animation
+function typeText(el, text) {
+    el.dataset.typing = '1';
+    el.innerText = '';
+    let i = 0;
+    const iv = setInterval(() => {
+        el.innerText += text[i++];
+        if (i >= text.length) { clearInterval(iv); delete el.dataset.typing; }
+    }, 40);
+}
+
+// ─── DRAW BACKGROUND ─────────────────────────────────────────────────────
+function drawBackground() {
+    const mode = getMode();
+    bgCtx.globalCompositeOperation = 'destination-out';
+    bgCtx.fillStyle = `rgba(0,0,0,${0.12 + Math.min(handVelocities * 8, 0.45)})`;
+    bgCtx.fillRect(0, 0, W, H);
+    bgCtx.globalCompositeOperation = 'source-over';
+
+    bgCtx.fillStyle = mode.primary;
+    bgCtx.font = fontSize + "px 'Share Tech Mono'";
+    const speed = 0.8 + handVelocities * 80 * mode.matrixSpeed;
+
+    for (let i = 0; i < matrixColumns.length; i++) {
+        if (Math.random() > 0.94) {
+            const char = String.fromCharCode(0x30A0 + Math.random() * 96);
+            bgCtx.globalAlpha = 0.25 + Math.random() * 0.15;
+            bgCtx.fillText(char, i * fontSize, matrixColumns[i] * fontSize);
+        }
+        matrixColumns[i] += Math.random() * speed;
+        if (matrixColumns[i] * fontSize > H && Math.random() > 0.9)
+            matrixColumns[i] = 0;
+    }
+    bgCtx.globalAlpha = 1;
+}
+
+// ─── DRAW RADAR ───────────────────────────────────────────────────────────
+function drawRadar() {
+    const rc = radarCtx;
+    const cx = 45, cy = 45, r = 42;
+    rc.clearRect(0, 0, 90, 90);
+    const p = getMode().primary;
+
+    // Rings
+    [1, 0.65, 0.35].forEach(s => {
+        rc.beginPath();
+        rc.arc(cx, cy, r * s, 0, Math.PI * 2);
+        rc.strokeStyle = p;
+        rc.globalAlpha = 0.25;
+        rc.lineWidth = 1;
+        rc.stroke();
+    });
+
+    // Cross hairs
+    rc.globalAlpha = 0.2;
+    rc.strokeStyle = p;
+    rc.lineWidth = 1;
+    rc.beginPath(); rc.moveTo(cx - r, cy); rc.lineTo(cx + r, cy); rc.stroke();
+    rc.beginPath(); rc.moveTo(cx, cy - r); rc.lineTo(cx, cy + r); rc.stroke();
+
+    // Sweep
+    const sweepAngle = (time * 1.5) % (Math.PI * 2);
+    rc.globalAlpha = 1;
+    const grad = rc.createConicalGradient
+        ? rc.createConicalGradient(cx, cy, sweepAngle)
+        : null;
+    if (!grad) {
+        // Fallback arc sweep
+        rc.beginPath();
+        rc.moveTo(cx, cy);
+        rc.arc(cx, cy, r, sweepAngle - 0.8, sweepAngle);
+        rc.closePath();
+        rc.fillStyle = p;
+        rc.globalAlpha = 0.3;
+        rc.fill();
+        // Sweep line
+        rc.beginPath();
+        rc.moveTo(cx, cy);
+        rc.lineTo(cx + Math.cos(sweepAngle) * r, cy + Math.sin(sweepAngle) * r);
+        rc.strokeStyle = p;
+        rc.lineWidth = 1.5;
+        rc.globalAlpha = 0.9;
+        rc.stroke();
+    }
+
+    // Blips for detected hands
+    currentHands.forEach((hand, i) => {
+        const palm = hand[9];
+        const bx = cx + (palm.x - 0.5) * r * 1.6;
+        const by = cy + (palm.y - 0.5) * r * 1.6;
+        rc.beginPath();
+        rc.arc(bx, by, 3, 0, Math.PI * 2);
+        rc.fillStyle = p;
+        rc.globalAlpha = 0.9;
+        rc.fill();
+        rc.beginPath();
+        rc.arc(bx, by, 6 + Math.sin(time * 4) * 2, 0, Math.PI * 2);
+        rc.strokeStyle = p;
+        rc.lineWidth = 1;
+        rc.globalAlpha = 0.3;
+        rc.stroke();
+    });
+
+    rc.globalAlpha = 1;
+}
+
+// ─── PHYSICS UPDATE ───────────────────────────────────────────────────────
+function updatePhysics() {
+    // Particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx; p.y += p.vy;
+        p.vy += 0.08;
+        p.life -= 0.025;
+        if (p.life <= 0) { particles.splice(i, 1); continue; }
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI*2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.life;
+        ctx.fill();
+    }
+    // Ripples
+    for (let i = ripples.length - 1; i >= 0; i--) {
+        const r = ripples[i];
+        r.radius += (r.maxRadius - r.radius) * 0.1;
+        r.life -= 0.025;
+        if (r.life <= 0) { ripples.splice(i, 1); continue; }
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, r.radius, 0, Math.PI*2);
+        ctx.strokeStyle = r.color;
+        ctx.lineWidth = 3 * r.life;
+        ctx.globalAlpha = r.life;
+        ctx.stroke();
+        // Secondary ring
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, r.radius * 0.6, 0, Math.PI*2);
+        ctx.lineWidth = 1 * r.life;
+        ctx.globalAlpha = r.life * 0.4;
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+}
+
+// ─── MAIN RENDER LOOP ─────────────────────────────────────────────────────
+function renderLoop(ts) {
+    requestAnimationFrame(renderLoop);
+    const dt = (ts - lastTime) / 1000;
+    lastTime = ts;
+    time += dt;
+
+    // FPS
+    framesThisSecond++;
+    if (ts > lastFpsTime + 1000) {
+        const fps = framesThisSecond;
+        uiFps.innerText = fps;
+        const load = Math.min(Math.round(100 - fps * 0.6 + Math.random() * 8), 99);
+        uiLoad.innerText = load + '%';
+        loadBar.style.width = load + '%';
+        framesThisSecond = 0; lastFpsTime = ts;
+    }
+
+    // Uptime
+    if (startTime) {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const h = String(Math.floor(elapsed/3600)).padStart(2,'0');
+        const m = String(Math.floor((elapsed%3600)/60)).padStart(2,'0');
+        const s = String(elapsed%60).padStart(2,'0');
+        uiUptime.innerText = `${h}:${m}:${s}`;
+    }
+
+    drawBackground();
+    drawRadar();
+
+    // Fade main canvas
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'screen';
+
+    updatePhysics();
+
+    if (currentHands.length > 0) {
+        const mode = getMode();
+
+        currentHands.forEach((hand, hIdx) => {
+            const col = mode.colorFn(time, hIdx, 2);
+
+            // Skeleton
+            HAND_CONNECTIONS.forEach(([a, b]) => {
+                const pa = mapToCanvas(hand[a]), pb = mapToCanvas(hand[b]);
+                ctx.beginPath();
+                ctx.moveTo(pa.x, pa.y);
+                ctx.lineTo(pb.x, pb.y);
+                ctx.strokeStyle = col;
+                ctx.lineWidth = 1.5;
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = col;
+                ctx.stroke();
+            });
+
+            // Fingertips
+            FINGER_TIPS.forEach((ti, fi) => {
+                const pt  = mapToCanvas(hand[ti]);
+                const tc  = mode.colorFn(time, fi, FINGER_TIPS.length);
+
+                // Outer glow ring
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 8 + Math.sin(time * 3 + fi) * 2, 0, Math.PI*2);
+                ctx.strokeStyle = tc;
+                ctx.lineWidth = 1;
+                ctx.globalAlpha = 0.4;
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+
+                // Center dot
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 4, 0, Math.PI*2);
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 18;
+                ctx.shadowColor = tc;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                if (Math.random() > 0.6)
+                    spawnParticles(pt, tc, mode.particleCount);
+            });
+        });
+
+        // Dual-hand interactions
+        if (currentHands.length >= 2) {
+            const h1 = currentHands[0], h2 = currentHands[1];
+            const mode = getMode();
+
+            FINGER_TIPS.forEach((ti, fi) => {
+                const p1 = mapToCanvas(h1[ti]);
+                const p2 = mapToCanvas(h2[ti]);
+                const d  = dist2D(p1, p2);
+                const col = mode.colorFn(time, fi, FINGER_TIPS.length);
+
+                // Lightning arc
+                if (d < 160 && Math.random() > 0.45) {
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    const mx = (p1.x+p2.x)/2 + (Math.random()-.5)*60;
+                    const my = (p1.y+p2.y)/2 + (Math.random()-.5)*60;
+                    ctx.lineTo(mx, my);
+                    ctx.lineTo(p2.x, p2.y);
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.shadowBlur = 20; ctx.shadowColor = col;
+                    ctx.lineWidth = 2;
+                    ctx.globalAlpha = 0.8;
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
+
+                // Gradient connector
+                const grad = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
+                grad.addColorStop(0, mode.colorFn(time, fi, 5));
+                grad.addColorStop(0.5, mode.colorFn(time, fi+1, 5));
+                grad.addColorStop(1, mode.colorFn(time, fi+2, 5));
+                ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+                ctx.strokeStyle = grad; ctx.lineWidth = 3;
+                ctx.shadowBlur = 10; ctx.shadowColor = col;
+                ctx.stroke(); ctx.shadowBlur = 0;
+            });
+
+            // Mandala
+            const allTips = FINGER_TIPS.map(t => mapToCanvas(h1[t]))
+                       .concat(FINGER_TIPS.map(t => mapToCanvas(h2[t])));
+            const cx = allTips.reduce((s,p)=>s+p.x,0)/10;
+            const cy = allTips.reduce((s,p)=>s+p.y,0)/10;
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(time * 0.4);
+            ctx.beginPath();
+            for (let i=0;i<10;i++) {
+                const t1 = { x:allTips[i].x-cx, y:allTips[i].y-cy };
+                const t2 = { x:allTips[(i+4)%10].x-cx, y:allTips[(i+4)%10].y-cy };
+                ctx.moveTo(t1.x,t1.y); ctx.lineTo(t2.x,t2.y);
+            }
+            ctx.strokeStyle = `rgba(255,255,255,0.15)`;
+            ctx.lineWidth = 1; ctx.stroke();
+            ctx.restore();
+        }
+
+        detectGestures();
+        updateHum(currentHands);
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+}
+
+// ─── MODE SWITCHING ───────────────────────────────────────────────────────
+document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const newMode = btn.dataset.mode;
+        currentMode = newMode;
+
+        // Glitch transition
+        const glitch = document.getElementById('glitch');
+        glitch.classList.add('active');
+        setTimeout(() => glitch.classList.remove('active'), 500);
+
+        // Update CSS vars
+        const cfg = getMode();
+        document.documentElement.style.setProperty('--mode-primary', cfg.primary);
+        document.documentElement.style.setProperty('--mode-secondary', cfg.secondary);
+        document.documentElement.style.setProperty('--mode-accent', cfg.accent);
+
+        document.getElementById('mode-strip').innerText = newMode + ' MODE';
+        typeText(document.getElementById('ui-status'), 'SWITCHING...');
+        setTimeout(() => { document.getElementById('ui-status').innerText = 'ONLINE'; }, 1000);
+
+        playModeSwitch();
+    });
+});
+
+// ─── MEDIAPIPE ────────────────────────────────────────────────────────────
+function initMediaPipe() {
+    const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    hands.onResults(results => {
+        if (!audioCtx) return;
+        const detected = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
+        uiHands.innerText = detected;
+        document.getElementById('ui-tracking').innerText = detected > 0 ? 'LOCKED' : 'ACTIVE';
+
+        if (currentHands.length > 0 && detected > 0) {
+            const op = currentHands[0][8], np = results.multiHandLandmarks[0][8];
+            if (op && np) handVelocities = dist2D(op, np);
+        } else { handVelocities = 0; }
+
+        currentHands = results.multiHandLandmarks || [];
+    });
+    const cam = new Camera(videoEl, {
+        onFrame: async () => await hands.send({ image: videoEl }),
+        width: 1280, height: 720, facingMode: 'user'
+    });
+    cam.start();
+}
+
+// ─── BOOT SEQUENCE ────────────────────────────────────────────────────────
+function runBootSequence() {
+    const bar  = document.getElementById('bootBar');
+    const pct  = document.getElementById('bootPct');
+    const logs = ['log1','log2','log3','log4','log5'];
+    const steps= [15, 35, 60, 80, 100];
+
+    let current = 0;
+    function nextStep() {
+        if (current >= logs.length) return;
+        const el = document.getElementById(logs[current]);
+        el.classList.add('show');
+        bar.style.width  = steps[current] + '%';
+        pct.innerText    = steps[current] + '%';
+        current++;
+
+        if (current === logs.length) {
+            setTimeout(() => {
+                document.getElementById('bootWelcome').classList.add('show');
+                document.getElementById('activateBtn').classList.add('show');
+            }, 500);
+        } else {
+            setTimeout(nextStep, 700 + Math.random() * 400);
+        }
+    }
+    setTimeout(nextStep, 800);
+}
+
+// ─── START BUTTON ─────────────────────────────────────────────────────────
+document.getElementById('activateBtn').addEventListener('click', () => {
+    playClick();
+    const overlay = document.getElementById('bootOverlay');
+    overlay.classList.add('fade-out');
+    setTimeout(() => overlay.classList.add('hidden'), 1000);
+
+    document.getElementById('hud').classList.remove('invisible');
+    document.getElementById('modes').classList.remove('invisible');
+
+    // Set initial mode colors
+    const cfg = getMode();
+    document.documentElement.style.setProperty('--mode-primary', cfg.primary);
+    document.documentElement.style.setProperty('--mode-secondary', cfg.secondary);
+    document.documentElement.style.setProperty('--mode-accent', cfg.accent);
+
+    initAudio();
+    initMediaPipe();
+    startTime = Date.now();
+    requestAnimationFrame(renderLoop);
+});
+
+// Kick off boot sequence on load
+window.addEventListener('load', runBootSequence);
+</script>
+</body>
+</html>
